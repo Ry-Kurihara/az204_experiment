@@ -4,9 +4,10 @@
 
     - az webapp deploy  - clean true
 
-  - zipファイルのロック？
+  - zipファイルのロック（本番の読み取り動作などとの衝突）
 
     - スワップを有効にしてステージングに対してaz webapp deployで解決
+      - 本番ワーカーが直接ファイルを触っているところに上書きする機会がなくなり、ロック衝突の可能性が大幅に下がる
 
   - TLS/SSL証明書
 
@@ -36,31 +37,40 @@
 
       - ```mermaid
         graph TD
-            subgraph テナント
-              direction TB
-              Single[シングルテナント]
-              Multi[マルチテナント]
-            end
+          subgraph テナント
+            direction TB
+            Tenant1["Microsoft Entra ID<br>テナント (tenant1)"]
+            AppObj["アプリケーション オブジェクト<br>(app1)"]
+            AppSP["サービス プリンシパル<br>(app1 の SP)"]
+          end
         
-            Application["アプリケーション オブジェクト</br>(Application Object)"]
-            SP["サービス プリンシパル</br>(Service Principal)"]
-            MI["マネージド ID</br>(Managed Identity)"]
-            Legacy["レガシ SP</br>(手動作成)"]
+          WebApp["Azure App Service Web アプリ<br>(app1)"]
+          MI["マネージド ID<br>(Managed Identity)"]
+          Legacy["レガシ SP<br>(手動 SP)"]
         
-            Single -->|1つの SP| SP
-            Multi -->|各テナントに SP| SP
-            Application -->|テンプレート| SP
-            SP --> MI
-            SP --> Legacy
+          WebApp -->|登録| AppObj
+          AppObj -->|テンプレート| AppSP
+          AppSP --> MI
+          AppSP --> Legacy
         
+          %% Microsoft Graph API へ権限付与対象
+          Graph["Microsoft Graph API"]
+          AppSP -.->|アクセス許可を付与| Graph
         ```
 
-      - 
+- **ACR**
+
+  - az acr repository delete --name devregistry --image dev/nginx:latest
+
+- **ACI**
+
+  - az container up --source .: 起動する
 
 - **Azure Function**
 
   - Microsoft Defender for Cloud
-    - 未解決のDNSドメイン？
+    - 未解決のDNSドメイン
+      - 関数が増えてくると起こるトラブルみたいなものらしい
     - Standardからサポート
   - トリガーとバインド設定
     - C#クラスライブラリ： C#属性での装飾定義
@@ -156,12 +166,16 @@
   - なんかよくわからんコード
     - EventPosition startingPosition = EventPosition.Earliest;
     - string partitionId = (await consumer.GetPartitionIdsAsync()).First();
-  - Azure EventHub Capture
+  - Azure EventHub Captureで配信できる先
     - Azure Blob
     - Data Lake Storage Gen1, Gen2
 
 - EventGrid
 
+  - フィルタできる条件は3カテゴリ
+    - イベントの種類
+    - 件名の始まりまたは終り
+    - 高度なフィールドおよび演算子（高度なフィルター処理：Advanced）
   - 指定された再試行スケジュール内で配信されないイベントをキャプチャするために [配信不能] を有効にします。
 
 - Service Bus
@@ -170,11 +184,13 @@
 
   - セッション機能：FIFOの担保
 
-  - 
-
   - | パターン                     | ユースケース例                                               | メリット                                                     | デメリット                                                   |
     | ---------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
     | **単純要求／応答**           | クライアントがキューにリクエストを送り、ワーカーが処理後に専用のレスポンス キューへ返信 | - 実装がシンプル- トレーサビリティ（MessageId⇔CorrelationId）が取りやすい | - 1:1 通信のみ- スケールはリクエスター／レスポンダー双方に依存 |
     | **マルチキャスト要求／応答** | 発行元がトピックへメッセージをパブリッシュし、複数のサブスクライバーが同じリクエストを処理＆各自が応答を返す場合 | - 複数コンシューマーで並列／独立処理可能- サブスクライバーを動的に増やせる | - 応答の集約や失敗ハンドリングが複雑- トピックのスケーリングコスト が増大 |
     | **多重化（セッション）**     | SessionId で関連メッセージ群を識別し、１つの受信プロセスが同一セッション内を順序どおり処理 | - メッセージ順序保証- 関連メッセージの単一コンシューマー割り当て- レースコンディション排除 | - セッション単位でロック／リソースを確保- セッションタイムアウト・死活管理が必要 |
     | **多重化された要求／応答**   | 複数の発行元が同一応答キューを共有し、ReplyToSessionId で自分宛のセッションを指定して返答を受け取る | - 発行元ごとに応答先を分離できる- 双方向通信をスケーラブルに実現 | - ReplyToSessionId の管理・復元が煩雑- 応答セッションが残存するとキュー保持コストがかさむ可能性あり |
+    
+    トピックのフィルター条件で設定可能なもの
+    
+    - SQL, bool, 相関関係
